@@ -13,10 +13,10 @@
                 <div>
                     <p class="text-sm font-medium uppercase tracking-wide text-zinc-500">Laravel + MySQL</p>
                     <h1 class="text-3xl font-semibold tracking-tight">Database replication</h1>
-                    <p class="mt-2 max-w-2xl text-zinc-600">Writes go to the primary. Reads use the replica. Sticky mode keeps the same request on the primary after a write so you do not read stale data.</p>
+                    <p class="mt-2 max-w-2xl text-zinc-600">Writes go to one primary. Reads are load-balanced across two read-only replicas. Sticky mode keeps the same request on the primary after a write so you do not read stale data.</p>
                 </div>
                 <div class="rounded-full px-3 py-1 text-sm font-medium {{ $status['enabled'] && $healthy ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800' }}">
-                    {{ $status['enabled'] && $healthy ? 'Replica healthy' : ($status['enabled'] ? 'Replica not ready' : 'Splitting disabled') }}
+                    {{ $status['enabled'] && $healthy ? 'Replicas healthy' : ($status['enabled'] ? 'Replica not ready' : 'Splitting disabled') }}
                 </div>
             </header>
 
@@ -30,13 +30,28 @@
 
             @if (! $status['enabled'])
                 <section class="mb-8 rounded-xl border border-amber-200 bg-amber-50 p-5 text-sm text-amber-900">
-                    <p class="font-medium">Start the MySQL primary and replica, then point Laravel at them:</p>
+                    <p class="font-medium">Start the MySQL primary and both replicas, then point Laravel at them:</p>
                     <pre class="mt-3 overflow-x-auto rounded-lg bg-zinc-900 p-4 text-zinc-100">docker compose up -d
 php artisan migrate</pre>
                     <p class="mt-3">Set <code class="rounded bg-amber-100 px-1">DB_CONNECTION=mysql</code> and <code class="rounded bg-amber-100 px-1">DB_REPLICA_HOST=127.0.0.1</code> in <code class="rounded bg-amber-100 px-1">.env</code>.</p>
                 </section>
             @endif
             
+            @if ($status['enabled'] && $status['default_select'] && $status['default_write'])
+                <section class="mb-8 rounded-xl border p-5 text-sm {{ $status['select_uses_replica'] ? 'border-emerald-200 bg-emerald-50 text-emerald-900' : 'border-red-200 bg-red-50 text-red-900' }}">
+                    <p class="font-medium">{{ $status['select_uses_replica'] ? 'This request’s SELECT hit a replica, not the primary.' : 'This request’s SELECT did not hit a replica.' }}</p>
+                    <p class="mt-2 font-mono">
+                        SELECT @@server_id = {{ $status['default_select']['server_id'] }}
+                        ({{ $status['default_select']['hostname'] }}, read_only={{ $status['default_select']['read_only'] ? '1' : '0' }})
+                    </p>
+                    <p class="mt-1 font-mono">
+                        WRITE @@server_id = {{ $status['default_write']['server_id'] }}
+                        ({{ $status['default_write']['hostname'] }}, read_only={{ $status['default_write']['read_only'] ? '1' : '0' }})
+                    </p>
+                    <p class="mt-2">Read pool: {{ implode(', ', $status['read_hosts']) }}</p>
+                </section>
+            @endif
+
             <section class="mb-8 grid gap-4 md:grid-cols-3">
                 <article class="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
                     <h2 class="text-sm font-medium text-zinc-500">Write host</h2>
@@ -44,16 +59,25 @@ php artisan migrate</pre>
                     <p class="mt-3 text-sm text-zinc-600">Primary server ID {{ $status['primary']['server_id'] ?? 'n/a' }}</p>
                 </article>
                 <article class="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
-                    <h2 class="text-sm font-medium text-zinc-500">Read host</h2>
-                    <p class="mt-2 font-mono text-sm">{{ $status['read_host'] ?? 'default connection' }}</p>
-                    <p class="mt-3 text-sm text-zinc-600">Replica server ID {{ $status['replica']['server_id'] ?? 'n/a' }}</p>
+                    <h2 class="text-sm font-medium text-zinc-500">Read hosts</h2>
+                    <p class="mt-2 font-mono text-sm">{{ implode(', ', $status['read_hosts']) ?: 'default connection' }}</p>
+                    <p class="mt-3 text-sm text-zinc-600">
+                        @foreach ($status['replicas'] as $replica)
+                            {{ $replica['name'] }} id {{ $replica['server']['server_id'] ?? 'n/a' }}@if (! $loop->last), @endif
+                        @endforeach
+                        @if ($status['replicas'] === [])
+                            n/a
+                        @endif
+                    </p>
                 </article>
                 <article class="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
                     <h2 class="text-sm font-medium text-zinc-500">Replication lag</h2>
-                    <p class="mt-2 text-2xl font-semibold">{{ $status['replica_status']['seconds_behind'] ?? 'n/a' }}s</p>
+                    <p class="mt-2 text-2xl font-semibold">{{ collect($status['replicas'])->max(fn ($replica) => $replica['status']['seconds_behind'] ?? 0) ?? 'n/a' }}s</p>
                     <p class="mt-3 text-sm text-zinc-600">
-                        IO {{ $status['replica_status']['io_running'] ?? 'n/a' }}
-                        · SQL {{ $status['replica_status']['sql_running'] ?? 'n/a' }}
+                        @foreach ($status['replicas'] as $replica)
+                            {{ $replica['name'] }} IO {{ $replica['status']['io_running'] ?? 'n/a' }}
+                            / SQL {{ $replica['status']['sql_running'] ?? 'n/a' }}@if (! $loop->last)<br>@endif
+                        @endforeach
                         · Sticky {{ $status['sticky'] ? 'on' : 'off' }}
                     </p>
                 </article>
@@ -84,7 +108,7 @@ php artisan migrate</pre>
                     </form>
                 </section>
 
-                <section class="grid gap-4 sm:grid-cols-2">
+                <section class="grid gap-4 sm:grid-cols-3">
                     <article class="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
                         <h2 class="font-semibold">Primary rows</h2>
                         <p class="mt-1 text-sm text-zinc-500">{{ $postsOnPrimary->count() }} shown</p>
@@ -99,20 +123,22 @@ php artisan migrate</pre>
                             @endforelse
                         </ul>
                     </article>
-                    <article class="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
-                        <h2 class="font-semibold">Replica rows</h2>
-                        <p class="mt-1 text-sm text-zinc-500">{{ $postsOnReplica->count() }} shown</p>
-                        <ul class="mt-4 space-y-3">
-                            @forelse ($postsOnReplica as $post)
-                                <li class="rounded-lg border border-zinc-100 bg-zinc-50 p-3">
-                                    <p class="font-medium">{{ $post->title }}</p>
-                                    <p class="mt-1 text-sm text-zinc-600">{{ $post->body }}</p>
-                                </li>
-                            @empty
-                                <li class="text-sm text-zinc-500">No posts on the replica yet.</li>
-                            @endforelse
-                        </ul>
-                    </article>
+                    @foreach ($replicaPosts as $name => $posts)
+                        <article class="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
+                            <h2 class="font-semibold">{{ $name }} rows</h2>
+                            <p class="mt-1 text-sm text-zinc-500">{{ $posts->count() }} shown</p>
+                            <ul class="mt-4 space-y-3">
+                                @forelse ($posts as $post)
+                                    <li class="rounded-lg border border-zinc-100 bg-zinc-50 p-3">
+                                        <p class="font-medium">{{ $post->title }}</p>
+                                        <p class="mt-1 text-sm text-zinc-600">{{ $post->body }}</p>
+                                    </li>
+                                @empty
+                                    <li class="text-sm text-zinc-500">No posts on {{ strtolower($name) }} yet.</li>
+                                @endforelse
+                            </ul>
+                        </article>
+                    @endforeach
                 </section>
             </div>
         </main>

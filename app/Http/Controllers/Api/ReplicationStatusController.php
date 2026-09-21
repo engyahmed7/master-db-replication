@@ -16,7 +16,7 @@ class ReplicationStatusController extends Controller
         $status = $monitor->snapshot();
 
         return response()->json([
-            'healthy' => $monitor->isHealthy($status['replica_status']),
+            'healthy' => $monitor->isHealthy(null, $status['replicas']),
             ...$status,
         ]);
     }

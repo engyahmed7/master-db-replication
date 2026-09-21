@@ -14,10 +14,9 @@ class ReplicationMonitor
      *     enabled: bool,
      *     sticky: bool,
      *     write_host: string|null,
-     *     read_host: string|null,
+     *     read_hosts: list<string>,
      *     primary: array<string, mixed>|null,
-     *     replica: array<string, mixed>|null,
-     *     replica_status: array<string, mixed>|null,
+     *     replicas: list<array<string, mixed>>,
      *     default_select: array<string, mixed>|null,
      *     default_write: array<string, mixed>|null,
      *     select_uses_replica: bool,
@@ -37,13 +36,9 @@ class ReplicationMonitor
                 $this->firstHost($config['write']['host'] ?? $config['host'] ?? null),
                 $config['write']['port'] ?? $config['port'] ?? null,
             ),
-            'read_host' => $this->formatHost(
-                $this->firstHost($config['read']['host'] ?? $config['host'] ?? null),
-                $config['read']['port'] ?? $config['port'] ?? null,
-            ),
+            'read_hosts' => $this->readHosts($config),
             'primary' => null,
-            'replica' => null,
-            'replica_status' => null,
+            'replicas' => [],
             'default_select' => null,
             'default_write' => null,
             'select_uses_replica' => false,
@@ -56,12 +51,14 @@ class ReplicationMonitor
 
         try {
             $snapshot['primary'] = $this->serverInfo('mysql_primary');
-            $snapshot['replica'] = $this->serverInfo('mysql_replica');
-            $snapshot['replica_status'] = $this->replicaStatus();
+            $snapshot['replicas'] = $this->replicaSnapshots();
             $snapshot['default_select'] = $this->pdoIdentity(DB::connection()->getReadPdo());
             $snapshot['default_write'] = $this->pdoIdentity(DB::connection()->getPdo());
-            $snapshot['select_uses_replica'] = (int) ($snapshot['default_select']['server_id'] ?? 0)
-                === (int) ($snapshot['replica']['server_id'] ?? 0)
+            $replicaIds = array_map(
+                fn (array $replica): int => (int) ($replica['server']['server_id'] ?? 0),
+                $snapshot['replicas'],
+            );
+            $snapshot['select_uses_replica'] = in_array((int) ($snapshot['default_select']['server_id'] ?? 0), $replicaIds, true)
                 && (int) ($snapshot['default_select']['server_id'] ?? 0)
                 !== (int) ($snapshot['default_write']['server_id'] ?? 0);
         } catch (Throwable $e) {
@@ -91,11 +88,41 @@ class ReplicationMonitor
     }
 
     /**
+     * @return list<array{name: string, connection: string, host: string|null, server: array<string, mixed>, status: array<string, mixed>|null}>
+     */
+    public function replicaSnapshots(): array
+    {
+        $replicas = [
+            [
+                'name' => 'Replica 1',
+                'connection' => 'mysql_replica',
+                'host' => $this->formatHost(config('database.connections.mysql_replica.host'), config('database.connections.mysql_replica.port')),
+            ],
+        ];
+
+        if (config('database.connections.mysql_replica_2.host')) {
+            $replicas[] = [
+                'name' => 'Replica 2',
+                'connection' => 'mysql_replica_2',
+                'host' => $this->formatHost(config('database.connections.mysql_replica_2.host'), config('database.connections.mysql_replica_2.port')),
+            ];
+        }
+
+        return array_map(function (array $replica): array {
+            return [
+                ...$replica,
+                'server' => $this->serverInfo($replica['connection']),
+                'status' => $this->replicaStatus($replica['connection']),
+            ];
+        }, $replicas);
+    }
+
+    /**
      * @return array<string, mixed>|null
      */
-    public function replicaStatus(): ?array
+    public function replicaStatus(string $connection = 'mysql_replica'): ?array
     {
-        $rows = DB::connection('mysql_replica')->select('SHOW REPLICA STATUS');
+        $rows = DB::connection($connection)->select('SHOW REPLICA STATUS');
 
         if ($rows === []) {
             return null;
@@ -128,14 +155,61 @@ class ReplicationMonitor
         ];
     }
 
-    public function isHealthy(?array $replicaStatus): bool
+    public function isHealthy(?array $replicaStatus = null, ?array $replicas = null): bool
     {
+        if (is_array($replicas)) {
+            if ($replicas === []) {
+                return false;
+            }
+
+            foreach ($replicas as $replica) {
+                if (! $this->isHealthy($replica['status'] ?? null)) {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
         if ($replicaStatus === null) {
             return false;
         }
 
         return $replicaStatus['io_running'] === 'Yes'
             && $replicaStatus['sql_running'] === 'Yes';
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function readHosts(array $config): array
+    {
+        $read = $config['read'] ?? [];
+
+        if ($read === []) {
+            return [];
+        }
+
+        if (isset($read[0]) && is_array($read[0])) {
+            $hosts = [];
+
+            foreach ($read as $item) {
+                $formatted = $this->formatHost($item['host'] ?? null, $item['port'] ?? $config['port'] ?? null);
+
+                if ($formatted !== null) {
+                    $hosts[] = $formatted;
+                }
+            }
+
+            return $hosts;
+        }
+
+        $formatted = $this->formatHost(
+            $this->firstHost($read['host'] ?? $config['host'] ?? null),
+            $read['port'] ?? $config['port'] ?? null,
+        );
+
+        return $formatted !== null ? [$formatted] : [];
     }
 
     private function firstHost(mixed $host): mixed

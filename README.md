@@ -1,59 +1,166 @@
-<p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>
+# Laravel MySQL Replication
 
-<p align="center">
-<a href="https://github.com/laravel/framework/actions"><img src="https://github.com/laravel/framework/workflows/tests/badge.svg" alt="Build Status"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/dt/laravel/framework" alt="Total Downloads"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/v/laravel/framework" alt="Latest Stable Version"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
-</p>
+A Laravel 13 demo of **MySQL 8.4 primary/replica replication** with **read/write splitting**. Writes go to one primary. Reads are load-balanced across two read-only replicas. MySQL copies the `master_db` database using GTID replication; Laravel only chooses which server to query.
 
-## About Laravel
+This is a local learning environment, not a production deployment. Default passwords are committed for convenience.
 
-Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:
+This topology is one writer and two readers (sometimes described as one master and two slaves). It is native MySQL replication, not Vitess.
 
-- [Simple, fast routing engine](https://laravel.com/docs/routing).
-- [Powerful dependency injection container](https://laravel.com/docs/container).
-- Multiple back-ends for [session](https://laravel.com/docs/session) and [cache](https://laravel.com/docs/cache) storage.
-- Expressive, intuitive [database ORM](https://laravel.com/docs/eloquent).
-- Database agnostic [schema migrations](https://laravel.com/docs/migrations).
-- [Robust background job processing](https://laravel.com/docs/queues).
-- [Real-time event broadcasting](https://laravel.com/docs/broadcasting).
+## Architecture
 
-Laravel is accessible, powerful, and provides tools required for large, robust applications.
-
-## Learning Laravel
-
-Laravel has the most extensive and thorough [documentation](https://laravel.com/docs) and video tutorial library of all modern web application frameworks, making it a breeze to get started with the framework.
-
-In addition, [Laracasts](https://laracasts.com) contains thousands of video tutorials on a range of topics including Laravel, modern PHP, unit testing, and JavaScript. Boost your skills by digging into our comprehensive video library.
-
-You can also watch bite-sized lessons with real-world projects on [Laravel Learn](https://laravel.com/learn), where you will be guided through building a Laravel application from scratch while learning PHP fundamentals.
-
-## Agentic Development
-
-Laravel's predictable structure and conventions make it ideal for AI coding agents like Claude Code, Cursor, and GitHub Copilot. Install [Laravel Boost](https://laravel.com/docs/ai) to supercharge your AI workflow:
-
-```bash
-composer require laravel/boost --dev
-
-php artisan boost:install
+```
+                         ┌─────────────────────┐
+                         │   Laravel app       │
+                         │   :8000             │
+                         └──────────┬──────────┘
+                    INSERT/UPDATE   │   SELECT (random replica)
+                                    │
+               ┌────────────────────┼────────────────────┐
+               ▼                    ▼                    ▼
+     ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐
+     │ Primary (write) │  │ Replica 1 (read)│  │ Replica 2 (read)│
+     │ :3310  id=1     │─►│ :3311  id=2     │  │ :3312  id=3     │
+     │ read_only = OFF │─►│ read_only = ON  │  │ read_only = ON  │
+     └─────────────────┘  └─────────────────┘  └─────────────────┘
+               ▲                    ▲                    ▲
+               └──────── phpMyAdmin :8080 ───────────────┘
 ```
 
-Boost provides your agent 15+ tools and skills that help agents build Laravel applications while following best practices.
+| Role | Host port | MySQL `@@server_id` | Writable |
+| --- | --- | --- | --- |
+| Primary | `127.0.0.1:3310` | `1` | Yes |
+| Replica 1 | `127.0.0.1:3311` | `2` | No |
+| Replica 2 | `127.0.0.1:3312` | `3` | No |
 
-## Contributing
+All three servers use the same database name: **`master_db`**. Each replica is a copy of the primary, not a second schema.
 
-Thank you for considering contributing to the Laravel framework! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
+## Requirements
 
-## Code of Conduct
+- PHP 8.3+ with `pdo_mysql`
+- Composer
+- Docker and Docker Compose
+- Node.js (for the dashboard assets)
 
-In order to ensure that the Laravel community is welcoming to all, please review and abide by the [Code of Conduct](https://laravel.com/docs/contributions#code-of-conduct).
+Ports `3310`, `3311`, `3312`, and `8080` must be free on the host.
 
-## Security Vulnerabilities
+## Quick start
 
-If you discover a security vulnerability within Laravel, please send an e-mail to Taylor Otwell via [taylor@laravel.com](mailto:taylor@laravel.com). All security vulnerabilities will be promptly addressed.
+```bash
+cp .env.example .env
+php artisan key:generate
 
-## License
+docker compose up -d
+php artisan migrate
+npm install
+npm run build
+php artisan serve
+```
 
-The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
-# database_replication
+Wait until all three MySQL containers are healthy (`docker compose ps`) before migrating. First boot can take a minute or two.
+
+Confirm replication:
+
+```bash
+php artisan replication:status
+```
+
+You should see IO/SQL threads `Yes`, lag `0`, primary server id `1`, replica ids `2` and `3`.
+
+| Service | URL |
+| --- | --- |
+| Dashboard | http://127.0.0.1:8000 |
+| phpMyAdmin | http://127.0.0.1:8080 |
+| API | http://127.0.0.1:8000/api |
+
+## Configuration
+
+Application connection settings live in `.env`:
+
+```env
+DB_CONNECTION=mysql
+DB_HOST=127.0.0.1
+DB_PORT=3310
+DB_DATABASE=master_db
+DB_USERNAME=laravel
+DB_PASSWORD=secret
+
+DB_REPLICA_HOST=127.0.0.1
+DB_REPLICA_PORT=3311
+DB_REPLICA_2_HOST=127.0.0.1
+DB_REPLICA_2_PORT=3312
+DB_STICKY=true
+```
+
+Laravel read/write splitting is defined in `config/database.php`. When `DB_REPLICA_HOST` is set, the default `mysql` connection uses:
+
+- `write` → primary (`DB_HOST` / `DB_PORT`)
+- `read` → replica 1 and replica 2 (Laravel picks one at random per request)
+- `sticky` → after a write in the same request, later reads in that request use the primary so you do not read a row the replica has not copied yet
+
+Named connections `mysql_primary`, `mysql_replica`, and `mysql_replica_2` always target one server. The dashboard uses them to compare row lists.
+
+`@@server_id` is the reliable marker for which process you hit: **1 = write**, **2 or 3 = read**.
+
+## How replication is established
+
+`docker-compose.yml` starts three MySQL 8.4 instances with distinct `server-id`s, GTID, and two read-only replicas. That alone does **not** connect them.
+
+Init scripts mounted into `/docker-entrypoint-initdb.d` run once on first volume create:
+
+| Script | Purpose |
+| --- | --- |
+| `docker/mysql/primary/init/01-replication-user.sh` | Creates the `repl` user with `REPLICATION SLAVE` |
+| `docker/mysql/replica/init/01-start-replication.sh` | `CHANGE REPLICATION SOURCE` + `START REPLICA` (shared by both replicas) |
+
+`--replicate-do-db=master_db` must match `MYSQL_DATABASE` and `DB_DATABASE`. Changing the database name in Compose does not rename an existing volume; grants and the replica filter must be updated as well.
+
+## HTTP APIs
+
+API routes (`routes/api.php`) do not use CSRF. Use them from Postman.
+
+| Method | Path | Behavior |
+| --- | --- | --- |
+| `GET` | `/api/replication/status` | Primary/replica identity, lag, `select_uses_replica` |
+| `GET` | `/api/posts` | List posts (SELECT → a replica) |
+| `POST` | `/api/posts` | Create a post (INSERT → primary) |
+| `GET` | `/api/posts/{id}` | Show one post (SELECT → a replica) |
+
+Create a post:
+
+```http
+POST http://127.0.0.1:8000/api/posts
+Accept: application/json
+Content-Type: application/json
+
+{
+  "title": "From Postman",
+  "body": "Written to the primary."
+}
+```
+
+The JSON body includes `written_to.server_id` on create and `read_from.server_id` on reads.
+
+The browser dashboard at `/` still uses session CSRF. `POST /posts` from Postman without a token returns **419 Page Expired**. Use `/api/posts` instead.
+
+## phpMyAdmin
+
+Open http://127.0.0.1:8080 and pick the server dropdown:
+
+- **primary-write** — writable source
+- **replica-1-read** — read-only copy (`:3311`)
+- **replica-2-read** — read-only copy (`:3312`)
+
+Login: `laravel` / `secret`. Inspect `master_db` → `posts` on all three. Inserts on a replica should fail. Inserts on **primary-write** (or via the API) should appear on both replicas shortly after.
+
+## Project layout
+
+```
+docker-compose.yml
+docker/mysql/primary/init/     # replication user
+docker/mysql/replica/init/     # START REPLICA (both replicas)
+config/database.php            # read / write / sticky
+app/Http/Controllers/Api/      # Postman APIs
+app/Services/ReplicationMonitor.php
+routes/web.php                 # dashboard
+routes/api.php                 # /api/*
+```

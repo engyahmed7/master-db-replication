@@ -29,6 +29,7 @@ class ReplicationDashboardTest extends TestCase
         $response->assertOk();
         $response->assertSee('Database replication');
         $response->assertSee('Replica demo');
+        $response->assertSee('two read-only replicas');
         $response->assertSee('Splitting disabled');
     }
 

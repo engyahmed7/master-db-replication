@@ -24,12 +24,21 @@ $mysql = [
 ];
 
 if (env('DB_REPLICA_HOST')) {
-    $mysql['read'] = [
-        'host' => [
-            env('DB_REPLICA_HOST'),
+    $readHosts = [
+        [
+            'host' => env('DB_REPLICA_HOST'),
+            'port' => env('DB_REPLICA_PORT', '3311'),
         ],
-        'port' => env('DB_REPLICA_PORT', '3311'),
     ];
+
+    if (env('DB_REPLICA_2_HOST') || env('DB_REPLICA_2_PORT')) {
+        $readHosts[] = [
+            'host' => env('DB_REPLICA_2_HOST', env('DB_REPLICA_HOST')),
+            'port' => env('DB_REPLICA_2_PORT', '3312'),
+        ];
+    }
+
+    $mysql['read'] = $readHosts;
     $mysql['write'] = [
         'host' => [
             env('DB_HOST', '127.0.0.1'),
@@ -98,6 +107,15 @@ return [
             'sticky' => false,
             'host' => env('DB_REPLICA_HOST', env('DB_HOST', '127.0.0.1')),
             'port' => env('DB_REPLICA_PORT', '3311'),
+        ],
+
+        'mysql_replica_2' => [
+            ...$mysql,
+            'read' => null,
+            'write' => null,
+            'sticky' => false,
+            'host' => env('DB_REPLICA_2_HOST', env('DB_REPLICA_HOST', '127.0.0.1')),
+            'port' => env('DB_REPLICA_2_PORT', '3312'),
         ],
 
         'mariadb' => [

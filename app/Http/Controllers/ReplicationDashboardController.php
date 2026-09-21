@@ -19,14 +19,19 @@ class ReplicationDashboardController extends Controller
             'select' => $status['default_select'],
             'write' => $status['default_write'],
         ]);
+        $healthy = $monitor->isHealthy(null, $status['replicas']);
         $primaryConnection = $status['enabled'] ? 'mysql_primary' : (string) config('database.default');
-        $replicaConnection = $status['enabled'] ? 'mysql_replica' : (string) config('database.default');
+        $defaultConnection = (string) config('database.default');
 
         return view('replication', [
             'status' => $status,
-            'healthy' => $monitor->isHealthy($status['replica_status']),
+            'healthy' => $healthy,
             'postsOnPrimary' => Post::on($primaryConnection)->latest()->limit(20)->get(),
-            'postsOnReplica' => Post::on($replicaConnection)->latest()->limit(20)->get(),
+            'replicaPosts' => $status['enabled']
+                ? collect($status['replicas'])->mapWithKeys(fn (array $replica) => [
+                    $replica['name'] => Post::on($replica['connection'])->latest()->limit(20)->get(),
+                ])
+                : collect(['Replica' => Post::on($defaultConnection)->latest()->limit(20)->get()]),
         ]);
     }
 
@@ -36,6 +41,6 @@ class ReplicationDashboardController extends Controller
 
         return redirect()
             ->route('home')
-            ->with('status', 'Post written to the primary. Refresh to confirm it replicated to the replica.');
+            ->with('status', 'Post written to the primary. Refresh to confirm it replicated to both replicas.');
     }
 }

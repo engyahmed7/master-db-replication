@@ -12,7 +12,7 @@ use PDO;
 class PostController extends Controller
 {
     /**
-     * List posts from the default read connection (the replica).
+     * List posts from the default read connection (a replica).
      */
     public function index(): JsonResponse
     {
@@ -30,14 +30,14 @@ class PostController extends Controller
         $post = Post::query()->create($request->validated());
 
         return response()->json([
-            'message' => 'Post written to the primary and will replicate to the replica.',
+            'message' => 'Post written to the primary and will replicate to both replicas.',
             'written_to' => $this->connectionIdentity(DB::connection()->getPdo()),
             'post' => $post,
         ], 201);
     }
 
     /**
-     * Show a post from the default read connection (the replica).
+     * Show a post from the default read connection (a replica).
      */
     public function show(Post $post): JsonResponse
     {

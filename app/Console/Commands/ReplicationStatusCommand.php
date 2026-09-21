@@ -30,57 +30,56 @@ class ReplicationStatusCommand extends Command
             return self::FAILURE;
         }
 
-        $this->table(
-            ['Role', 'Host', 'Server ID', 'Read only', 'Posts'],
-            [
-                [
-                    'Primary',
-                    $status['write_host'],
-                    $status['primary']['server_id'] ?? 'n/a',
-                    ! empty($status['primary']['read_only']) ? 'yes' : 'no',
-                    $status['primary']['post_count'] ?? 0,
-                ],
-                [
-                    'Replica',
-                    $status['read_host'],
-                    $status['replica']['server_id'] ?? 'n/a',
-                    ! empty($status['replica']['read_only']) ? 'yes' : 'no',
-                    $status['replica']['post_count'] ?? 0,
-                ],
-            ],
-        );
+        $rows = [[
+            'Primary',
+            $status['write_host'],
+            $status['primary']['server_id'] ?? 'n/a',
+            ! empty($status['primary']['read_only']) ? 'yes' : 'no',
+            $status['primary']['post_count'] ?? 0,
+        ]];
 
-        $replica = $status['replica_status'];
-
-        if ($replica === null) {
-            $this->components->error('SHOW REPLICA STATUS returned no rows.');
-
-            return self::FAILURE;
+        foreach ($status['replicas'] as $replica) {
+            $rows[] = [
+                $replica['name'],
+                $replica['host'],
+                $replica['server']['server_id'] ?? 'n/a',
+                ! empty($replica['server']['read_only']) ? 'yes' : 'no',
+                $replica['server']['post_count'] ?? 0,
+            ];
         }
 
-        $this->table(
-            ['IO thread', 'SQL thread', 'Seconds behind', 'Source host'],
-            [[
-                $replica['io_running'] ?? 'n/a',
-                $replica['sql_running'] ?? 'n/a',
-                $replica['seconds_behind'] ?? 'n/a',
-                $replica['source_host'] ?? 'n/a',
-            ]],
-        );
+        $this->table(['Role', 'Host', 'Server ID', 'Read only', 'Posts'], $rows);
 
-        foreach (['last_error', 'last_io_error', 'last_sql_error'] as $errorKey) {
-            if (! empty($replica[$errorKey])) {
-                $this->components->error($replica[$errorKey]);
+        $statusRows = [];
+
+        foreach ($status['replicas'] as $replica) {
+            $replicaStatus = $replica['status'] ?? [];
+            $statusRows[] = [
+                $replica['name'],
+                $replicaStatus['io_running'] ?? 'n/a',
+                $replicaStatus['sql_running'] ?? 'n/a',
+                $replicaStatus['seconds_behind'] ?? 'n/a',
+                $replicaStatus['source_host'] ?? 'n/a',
+            ];
+        }
+
+        $this->table(['Replica', 'IO thread', 'SQL thread', 'Seconds behind', 'Source host'], $statusRows);
+
+        foreach ($status['replicas'] as $replica) {
+            foreach (['last_error', 'last_io_error', 'last_sql_error'] as $errorKey) {
+                if (! empty($replica['status'][$errorKey])) {
+                    $this->components->error($replica['name'].': '.$replica['status'][$errorKey]);
+                }
             }
         }
 
-        if (! $monitor->isHealthy($replica)) {
-            $this->components->error('Replica is not replicating.');
+        if (! $monitor->isHealthy(null, $status['replicas'])) {
+            $this->components->error('One or more replicas are not replicating.');
 
             return self::FAILURE;
         }
 
-        $this->components->info('Replica is replicating from the primary.');
+        $this->components->info('Both replicas are replicating from the primary.');
 
         return self::SUCCESS;
     }

@@ -58,4 +58,14 @@ class PostApiTest extends TestCase
         $response->assertUnprocessable();
         $response->assertJsonValidationErrors(['title', 'body']);
     }
+
+    public function test_replication_status_can_be_fetched(): void
+    {
+        $response = $this->getJson('/api/replication/status');
+
+        $response->assertOk();
+        $response->assertJsonPath('enabled', false);
+        $response->assertJsonPath('healthy', false);
+        $response->assertJsonPath('replicas', []);
+    }
 }
