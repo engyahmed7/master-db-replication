@@ -1,0 +1,100 @@
+services:
+  mysql-primary:
+    image: mysql:8.4
+    container_name: db-replication-primary
+    restart: unless-stopped
+    ports:
+      - "3310:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: secret
+      MYSQL_ROOT_HOST: "%"
+      MYSQL_DATABASE: master_db
+      MYSQL_USER: laravel
+      MYSQL_PASSWORD: secret
+      MYSQL_REPLICATION_USER: repl
+      MYSQL_REPLICATION_PASSWORD: replsecret
+    command:
+      - --server-id=1
+      - --log-bin=mysql-bin
+      - --gtid-mode=ON
+      - --enforce-gtid-consistency=ON
+      - --binlog-expire-logs-seconds=604800
+      - --innodb-buffer-pool-size=128M
+      - --max-connections=50
+      - --performance-schema=OFF
+      - --mysqlx=OFF
+      - --skip-name-resolve
+    mem_limit: 512m
+    volumes:
+      - mysql_primary_data:/var/lib/mysql
+      - ./docker/mysql/primary/init:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 180s
+
+  mysql-replica:
+    image: mysql:8.4
+    container_name: db-replication-replica
+    restart: unless-stopped
+    ports:
+      - "3311:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: secret
+      MYSQL_ROOT_HOST: "%"
+      MYSQL_DATABASE: master_db
+      MYSQL_USER: laravel
+      MYSQL_PASSWORD: secret
+      MYSQL_REPLICATION_USER: repl
+      MYSQL_REPLICATION_PASSWORD: replsecret
+      MYSQL_PRIMARY_HOST: mysql-primary
+    command:
+      - --server-id=2
+      - --log-bin=mysql-bin
+      - --gtid-mode=ON
+      - --enforce-gtid-consistency=ON
+      - --read-only=ON
+      - --relay-log=relay-bin
+      - --replicate-do-db=master_db
+      - --innodb-buffer-pool-size=128M
+      - --max-connections=50
+      - --performance-schema=OFF
+      - --mysqlx=OFF
+      - --skip-name-resolve
+    mem_limit: 512m
+    volumes:
+      - mysql_replica_data:/var/lib/mysql
+      - ./docker/mysql/replica/init:/docker-entrypoint-initdb.d
+    depends_on:
+      mysql-primary:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 180s
+
+  phpmyadmin:
+    image: phpmyadmin:5
+    container_name: db-replication-phpmyadmin
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    environment:
+      PMA_HOSTS: mysql-primary,mysql-replica
+      PMA_VERBOSES: primary-write,replica-read
+      PMA_PORT: 3306
+      PMA_USER: laravel
+      PMA_PASSWORD: secret
+    depends_on:
+      mysql-primary:
+        condition: service_healthy
+      mysql-replica:
+        condition: service_healthy
+
+volumes:
+  mysql_primary_data:
+  mysql_replica_data:

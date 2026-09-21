@@ -3,6 +3,42 @@
 use Illuminate\Support\Str;
 use Pdo\Mysql;
 
+$mysql = [
+    'driver' => 'mysql',
+    'url' => env('DB_URL'),
+    'host' => env('DB_HOST', '127.0.0.1'),
+    'port' => env('DB_PORT', '3306'),
+    'database' => env('DB_DATABASE', 'laravel'),
+    'username' => env('DB_USERNAME', 'root'),
+    'password' => env('DB_PASSWORD', ''),
+    'unix_socket' => env('DB_SOCKET', ''),
+    'charset' => env('DB_CHARSET', 'utf8mb4'),
+    'collation' => env('DB_COLLATION', 'utf8mb4_unicode_ci'),
+    'prefix' => '',
+    'prefix_indexes' => true,
+    'strict' => true,
+    'engine' => null,
+    'options' => extension_loaded('pdo_mysql') ? array_filter([
+        Mysql::ATTR_SSL_CA => env('MYSQL_ATTR_SSL_CA'),
+    ]) : [],
+];
+
+if (env('DB_REPLICA_HOST')) {
+    $mysql['read'] = [
+        'host' => [
+            env('DB_REPLICA_HOST'),
+        ],
+        'port' => env('DB_REPLICA_PORT', '3311'),
+    ];
+    $mysql['write'] = [
+        'host' => [
+            env('DB_HOST', '127.0.0.1'),
+        ],
+        'port' => env('DB_PORT', '3306'),
+    ];
+    $mysql['sticky'] = filter_var(env('DB_STICKY', true), FILTER_VALIDATE_BOOLEAN);
+}
+
 return [
 
     /*
@@ -44,24 +80,24 @@ return [
             'transaction_mode' => 'DEFERRED',
         ],
 
-        'mysql' => [
-            'driver' => 'mysql',
-            'url' => env('DB_URL'),
+        'mysql' => $mysql,
+
+        'mysql_primary' => [
+            ...$mysql,
+            'read' => null,
+            'write' => null,
+            'sticky' => false,
             'host' => env('DB_HOST', '127.0.0.1'),
             'port' => env('DB_PORT', '3306'),
-            'database' => env('DB_DATABASE', 'laravel'),
-            'username' => env('DB_USERNAME', 'root'),
-            'password' => env('DB_PASSWORD', ''),
-            'unix_socket' => env('DB_SOCKET', ''),
-            'charset' => env('DB_CHARSET', 'utf8mb4'),
-            'collation' => env('DB_COLLATION', 'utf8mb4_unicode_ci'),
-            'prefix' => '',
-            'prefix_indexes' => true,
-            'strict' => true,
-            'engine' => null,
-            'options' => extension_loaded('pdo_mysql') ? array_filter([
-                Mysql::ATTR_SSL_CA => env('MYSQL_ATTR_SSL_CA'),
-            ]) : [],
+        ],
+
+        'mysql_replica' => [
+            ...$mysql,
+            'read' => null,
+            'write' => null,
+            'sticky' => false,
+            'host' => env('DB_REPLICA_HOST', env('DB_HOST', '127.0.0.1')),
+            'port' => env('DB_REPLICA_PORT', '3311'),
         ],
 
         'mariadb' => [
