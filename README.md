@@ -56,15 +56,11 @@ npm run build
 php artisan serve
 ```
 
-Wait until all three MySQL containers are healthy (`docker compose ps`) before migrating. First boot can take a minute or two.
-
 Confirm replication:
 
 ```bash
 php artisan replication:status
 ```
-
-You should see IO/SQL threads `Yes`, lag `0`, primary server id `1`, replica ids `2` and `3`.
 
 | Service | URL |
 | --- | --- |
@@ -96,10 +92,6 @@ Laravel read/write splitting is defined in `config/database.php`. When `DB_REPLI
 - `write` → primary (`DB_HOST` / `DB_PORT`)
 - `read` → replica 1 and replica 2 (Laravel picks one at random per request)
 - `sticky` → after a write in the same request, later reads in that request use the primary so you do not read a row the replica has not copied yet
-
-Named connections `mysql_primary`, `mysql_replica`, and `mysql_replica_2` always target one server. The dashboard uses them to compare row lists.
-
-`@@server_id` is the reliable marker for which process you hit: **1 = write**, **2 or 3 = read**.
 
 ## How replication is established
 
@@ -140,7 +132,6 @@ Content-Type: application/json
 
 The JSON body includes `written_to.server_id` on create and `read_from.server_id` on reads.
 
-The browser dashboard at `/` still uses session CSRF. `POST /posts` from Postman without a token returns **419 Page Expired**. Use `/api/posts` instead.
 
 ## phpMyAdmin
 
